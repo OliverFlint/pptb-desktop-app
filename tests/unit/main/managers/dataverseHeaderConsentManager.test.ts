@@ -79,6 +79,16 @@ describe("DataverseHeaderConsentManager", () => {
         expect(main.send).not.toHaveBeenCalled();
     });
 
+    it("keeps F&O approval separate from Dataverse approval", async () => {
+        (settings.hasDataverseHeaderConsent as jest.Mock).mockImplementation((key) => key === "tool-a");
+        const result = manager.authorize(asWebContents(sender), "Read F&O", { Prefer: "return=minimal" }, "financeOperations");
+        const request = main.send.mock.calls[0][1];
+        expect(request.api).toBe("financeOperations");
+        manager.respond(request.requestId, "allow-tool");
+        await result;
+        expect(settings.grantDataverseHeaderConsent).toHaveBeenCalledWith("financeOperations:tool-a");
+    });
+
     it("rejects the pending request without releasing headers", async () => {
         const result = manager.authorize(asWebContents(sender), "Delete", { "MSCRM.BypassCustomPluginExecution": "true" });
         const request = main.send.mock.calls[0][1];

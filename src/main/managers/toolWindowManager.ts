@@ -1,10 +1,11 @@
 import { BrowserView, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import * as path from "path";
 import { ConnectionIds, ConnectionTarget, legacyConnectionIds, normalizeConnectionTarget, resolveConnectionSlots } from "../../common/connectionSlots";
+import { assertConnectionCompatible } from "../../common/connectionCompatibility";
 import { EVENT_CHANNELS, TOOL_WINDOW_CHANNELS } from "../../common/ipc/channels";
 import { logError, logInfo, logWarn } from "../../common/logger";
 import { addConnectionSlotsBreadcrumb, captureException } from "../../common/sentryHelper";
-import { LastUsedToolConnectionInfo, Tool } from "../../common/types";
+import { assertDataverseConnection, LastUsedToolConnectionInfo, Tool, type ToolFeatures } from "../../common/types";
 import type { DataverseUser } from "../../common/types/dataverse";
 import { ToolBoxEvent } from "../../common/types/events";
 import { BrowserviewProtocolManager } from "./browserviewProtocolManager";
@@ -59,6 +60,7 @@ export class ToolWindowManager {
      */
     private toolViews: Map</* instanceId: string */ string, BrowserView> = new Map();
     private toolConnectionInfo: Map<string, { connectionIds: ConnectionIds; impersonatedUsers: Array<DataverseUser | null> }> = new Map();
+    private toolConnectionFeatures = new Map<string, ToolFeatures | undefined>();
     /** Maps instanceId → tool display name (used for the "Return to [CallerToolName]" banner). */
     private toolInstanceNames: Map<string, string> = new Map();
     /**
@@ -395,6 +397,7 @@ export class ToolWindowManager {
         try {
             const connectionSlots = resolveConnectionSlots(tool.features);
             const resolvedConnectionIds = (connectionIds ?? legacyConnectionIds(primaryConnectionId, secondaryConnectionId)).slice(0, connectionSlots.max);
+            this.validateConnectionCompatibility(resolvedConnectionIds, tool.features);
             primaryConnectionId = resolvedConnectionIds[0] ?? null;
             secondaryConnectionId = resolvedConnectionIds[1] ?? null;
             addConnectionSlotsBreadcrumb(connectionSlots.min, connectionSlots.max, resolvedConnectionIds.filter(Boolean).length);
@@ -477,6 +480,7 @@ export class ToolWindowManager {
             this.toolViews.set(instanceId, toolView);
             // Store the tool display name for the "Return to [CallerToolName]" banner
             this.toolInstanceNames.set(instanceId, tool.name);
+            this.toolConnectionFeatures.set(instanceId, tool.features);
 
             // Get connection information for this tool instance
             // Connections are passed from frontend (per-instance), not retrieved from settings
@@ -643,6 +647,7 @@ export class ToolWindowManager {
         effectiveConnectionIds[0] = primaryConnectionId ?? effectiveConnectionIds[0] ?? null;
         effectiveConnectionIds[1] = secondaryConnectionId ?? effectiveConnectionIds[1] ?? null;
         const connectionSlots = resolveConnectionSlots(tool.features);
+        this.validateConnectionCompatibility(effectiveConnectionIds.slice(0, connectionSlots.max), tool.features);
         while (effectiveConnectionIds.length < connectionSlots.min) effectiveConnectionIds.push(null);
         const missingRequiredSlots = effectiveConnectionIds.slice(0, connectionSlots.min).some((connectionId) => !connectionId);
         const hasInheritedConnection = effectiveConnectionIds.slice(0, connectionSlots.max).some(Boolean);
@@ -651,7 +656,7 @@ export class ToolWindowManager {
             const requestId = `invocation-conn-${callerInstanceId}-${Date.now()}`;
             try {
                 logInfo("[ToolWindowManager] Inter-tool invocation awaiting connection selection", invocationLogContext);
-                effectiveConnectionIds = await this.promptForInvocationConnections(requestId, tool.name, connectionSlots.min, connectionSlots.max, effectiveConnectionIds);
+                effectiveConnectionIds = await this.promptForInvocationConnections(requestId, tool.name, connectionSlots.min, connectionSlots.max, effectiveConnectionIds, tool.features);
             } catch (err) {
                 const error = new Error(`Connection selection cancelled: ${err instanceof Error ? err.message : String(err)}`);
                 logError("[ToolWindowManager] Inter-tool invocation connection selection failed", { ...invocationLogContext, error: error.message });
@@ -722,7 +727,7 @@ export class ToolWindowManager {
      * Returns a Promise that resolves with the selected connection IDs once the user confirms,
      * or rejects if the user cancels the dialog.
      */
-    private promptForInvocationConnections(requestId: string, toolName: string, minConnections: number, maxConnections: number, inheritedConnectionIds: ConnectionIds): Promise<ConnectionIds> {
+    private promptForInvocationConnections(requestId: string, toolName: string, minConnections: number, maxConnections: number, inheritedConnectionIds: ConnectionIds, features?: ToolFeatures): Promise<ConnectionIds> {
         return new Promise((resolve, reject) => {
             this.pendingConnectionPrompts.set(requestId, { resolve, reject });
             this.mainWindow.webContents.send(TOOL_WINDOW_CHANNELS.INVOCATION_PROMPT_CONNECTIONS, {
@@ -731,6 +736,7 @@ export class ToolWindowManager {
                 minConnections,
                 maxConnections,
                 inheritedConnectionIds,
+                features,
             });
         });
     }
@@ -925,6 +931,7 @@ export class ToolWindowManager {
             // Remove from maps - also clean up connection info
             this.toolViews.delete(instanceId);
             this.toolConnectionInfo.delete(instanceId);
+            this.toolConnectionFeatures.delete(instanceId);
             this.toolInstanceNames.delete(instanceId);
             this.preventCloseTools.delete(instanceId);
 
@@ -1021,6 +1028,9 @@ export class ToolWindowManager {
         const targetIndex = normalizeConnectionTarget(connectionTarget);
         const connectionId = info?.connectionIds[targetIndex];
         if (!info || !connectionId) throw new Error(`The tool has no ${connectionTarget} connection.`);
+        const connection = this.connectionsManager.getConnectionById(connectionId);
+        if (!connection) throw new Error("Connection not found.");
+        assertDataverseConnection(connection);
         if (!user || !user.azureactivedirectoryobjectid || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(user.azureactivedirectoryobjectid))
             throw new Error("Selected Dataverse user has no valid Azure AD object ID.");
         info.impersonatedUsers[targetIndex] = user;
@@ -1270,6 +1280,7 @@ export class ToolWindowManager {
 
         this.toolViews.clear();
         this.toolConnectionInfo.clear();
+        this.toolConnectionFeatures.clear();
         this.preventCloseTools.clear();
         logInfo("[ToolWindowManager] All stale tool views closed and state reset.");
     }
@@ -1316,6 +1327,7 @@ export class ToolWindowManager {
             return;
         }
 
+        this.validateConnectionCompatibility(connectionIds, this.toolConnectionFeatures.get(instanceId));
         const previous = this.toolConnectionInfo.get(instanceId);
         const impersonatedUsers = [...(previous?.impersonatedUsers ?? [])];
         connectionIds.forEach((connectionId, index) => {
@@ -1361,6 +1373,15 @@ export class ToolWindowManager {
             if (toolView.webContents.id === webContentsId) return this.toolConnectionInfo.get(instanceId) ?? null;
         }
         return null;
+    }
+
+    private validateConnectionCompatibility(connectionIds: ConnectionIds, features?: ToolFeatures): void {
+        for (const connectionId of connectionIds) {
+            if (!connectionId) continue;
+            const connection = this.connectionsManager.getConnectionById(connectionId);
+            if (!connection) throw new Error(`Connection '${connectionId}' not found.`);
+            assertConnectionCompatible(connection, features);
+        }
     }
 
     /**

@@ -3,11 +3,15 @@ import * as fs from "fs";
 import * as path from "path";
 import { pathToFileURL } from "url";
 import { normalizeConnectionTarget, type ConnectionTarget } from "../../common/connectionSlots";
+import { assertConnectionCompatible } from "../../common/connectionCompatibility";
 import { logError, logInfo } from "../../common/logger";
 import type { Connection, DataverseBatchRequest, DataverseBatchResult, EntityRelatedMetadataPath, EntityRelatedMetadataResponse, MetadataOperationOptions, ToolSettings } from "../../common/types";
-import { ToolManifest } from "../../common/types";
+import { resolveConnectionType, ToolManifest } from "../../common/types";
 import { ConnectionsManager } from "../managers/connectionsManager";
 import { DataverseManager } from "../managers/dataverseManager";
+import { FinanceOperationsManager } from "../managers/financeOperationsManager";
+import { createFinanceOperationsAPI } from "../../common/financeOperationsApi";
+import { validateFinanceOperationsHeaders } from "../utilities/financeOperationsHttp";
 import { PowerPlatformManager } from "../managers/powerplatformManager";
 import { SettingsManager } from "../managers/settingsManager";
 import { mergeDataverseHeaders, validateAndSnapshotHeaders, validateBatchRequests } from "../utilities/dataverseBatch";
@@ -46,6 +50,7 @@ export interface HeadlessRuntimeServices {
     settingsManager?: SettingsManager;
     connectionsManager?: ConnectionsManager;
     dataverseManager?: DataverseManager;
+    financeOperationsManager?: FinanceOperationsManager;
     powerPlatformManager?: PowerPlatformManager;
 }
 
@@ -295,6 +300,7 @@ function toToolSafeConnection(connection: Connection | null): Record<string, unk
 
     return {
         id: connection.id,
+        connectionType: resolveConnectionType(connection.connectionType),
         name: connection.name,
         url: connection.url,
         environment: connection.environment,
@@ -328,6 +334,12 @@ function getConnectionSlotCount(context: HeadlessInvokeContext): number {
 }
 
 function resolveConnection(manifest: ToolManifest, context: HeadlessInvokeContext, services: HeadlessRuntimeServices, connectionTarget: ConnectionTarget = "primary"): Connection | null {
+    const connection = lookupConnection(manifest, context, services, connectionTarget);
+    if (connection) assertConnectionCompatible(connection, manifest.features);
+    return connection;
+}
+
+function lookupConnection(manifest: ToolManifest, context: HeadlessInvokeContext, services: HeadlessRuntimeServices, connectionTarget: ConnectionTarget): Connection | null {
     const index = normalizeConnectionTarget(connectionTarget);
     const connectionsManager = services.connectionsManager;
     if (!connectionsManager || index >= getConnectionSlotCount(context)) {
@@ -636,6 +648,7 @@ async function installHeadlessGlobals(manifest: ToolManifest, input: Record<stri
     const previousWindow = globalScope.window;
     const previousToolboxApi = globalScope.toolboxAPI;
     const previousDataverseApi = globalScope.dataverseAPI;
+    const previousFinanceOperationsApi = globalScope.financeOperationsAPI;
     const previousPowerPlatformApi = globalScope.powerplatformAPI;
 
     const toolboxApiWithDataverse = buildHeadlessToolboxApi(manifest, input, context, services);
@@ -643,6 +656,13 @@ async function installHeadlessGlobals(manifest: ToolManifest, input: Record<stri
     globalScope.window = globalThis as unknown as Record<string, unknown>;
     globalScope.toolboxAPI = toolboxAPI;
     globalScope.dataverseAPI = dataverseAPI;
+    globalScope.financeOperationsAPI = createFinanceOperationsAPI(async (method, path, body, options = {}) => {
+        const connection = requireResolvedConnection(manifest, context, services, options.connectionTarget);
+        if (!services.financeOperationsManager) throw new Error("F&O API is unavailable.");
+        const headers = validateFinanceOperationsHeaders(options.headers);
+        if (Object.keys(headers).length && !services.settingsManager?.hasDataverseHeaderConsent(`financeOperations:${context.toolId}`)) throw new Error("F&O custom headers require prior desktop consent for this tool.");
+        return services.financeOperationsManager.request(connection.id, method, path, body, { ...options, headers });
+    });
     globalScope.powerplatformAPI = {
         Analytics: buildPowerPlatformCategoryClient(manifest, context, services, "Analytics"),
         AppManagement: buildPowerPlatformCategoryClient(manifest, context, services, "AppManagement"),
@@ -665,6 +685,7 @@ async function installHeadlessGlobals(manifest: ToolManifest, input: Record<stri
         globalScope.window = previousWindow;
         globalScope.toolboxAPI = previousToolboxApi;
         globalScope.dataverseAPI = previousDataverseApi;
+        globalScope.financeOperationsAPI = previousFinanceOperationsApi;
         globalScope.powerplatformAPI = previousPowerPlatformApi;
     };
 }
@@ -709,6 +730,9 @@ async function requestPowerPlatform(
 }
 
 export async function invokeHeadlessTool(manifest: ToolManifest, input: Record<string, unknown>, context: HeadlessInvokeContext, services: HeadlessRuntimeServices): Promise<Record<string, unknown>> {
+    for (let slot = 0; slot < getConnectionSlotCount(context); slot++) {
+        resolveConnection(manifest, context, services, slot);
+    }
     const candidatePaths = resolveCandidatePaths(manifest);
     if (candidatePaths.length === 0) {
         throw new Error(`No headless runtime entry found for tool '${manifest.id}'. Add agents.headlessEntry in pptb.config.json or provide dist/headless.js.`);

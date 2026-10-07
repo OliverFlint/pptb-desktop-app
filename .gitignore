@@ -161,3 +161,8 @@ buildScripts/*/latest-mac.yml
 
 # Test Results
 test-results/
+
+# The read-only local sample has no build step.
+!examples/finance-operations-odata/dist/
+!examples/finance-operations-odata/dist/index.html
+!examples/finance-operations-odata/dist/sample.js

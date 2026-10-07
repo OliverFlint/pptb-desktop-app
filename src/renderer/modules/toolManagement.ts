@@ -5,6 +5,7 @@
 
 import type { ConnectionIds, ConnectionTarget } from "../../common/connectionSlots";
 import { resolveConnectionSlots } from "../../common/connectionSlots";
+import { assertConnectionCompatible, resolveSupportedConnectionTypes } from "../../common/connectionCompatibility";
 import { logError, logInfo, logWarn } from "../../common/logger";
 import type { Connection } from "../../common/types/connection";
 import type { DataverseUser } from "../../common/types/dataverse";
@@ -158,6 +159,7 @@ async function changeToolConnectionForInstance(instanceId: string): Promise<void
                     maxConnections: connectionSlots.max,
                     toolName: targetTool.tool.name,
                     initialConnectionIds: targetTool.connectionIds ?? [targetTool.connectionId, targetTool.secondaryConnectionId],
+                    connectionTypes: resolveSupportedConnectionTypes(targetTool.tool.features),
                 },
                 requirePowerPlatformApi,
             );
@@ -178,7 +180,7 @@ async function changeToolConnectionForInstance(instanceId: string): Promise<void
                 type: "success",
             });
         } else if (connectionSlots.max === 1) {
-            const { connectionId: selectedConnectionId, impersonationUser } = await openSelectConnectionModal(targetTool.connectionId, targetTool.tool.name, requirePowerPlatformApi);
+            const { connectionId: selectedConnectionId, impersonationUser } = await openSelectConnectionModal(targetTool.connectionId, targetTool.tool.name, requirePowerPlatformApi, false, resolveSupportedConnectionTypes(targetTool.tool.features));
 
             if (!selectedConnectionId) {
                 return;
@@ -401,13 +403,15 @@ export async function launchTool(toolId: string, options?: LaunchToolOptions): P
                 return null;
             }
 
+            let connection: Connection | null;
             try {
-                const connection = await window.toolboxAPI.connections.getById(connectionId);
-                return connection ? connection.id : null;
+                connection = await window.toolboxAPI.connections.getById(connectionId);
             } catch (error) {
                 logWarn(`Failed to resolve connection ${connectionId}`, { error: error instanceof Error ? error.message : String(error) });
                 return null;
             }
+            if (connection) assertConnectionCompatible(connection, tool.features);
+            return connection ? connection.id : null;
         };
 
         const requestedConnectionIds = options?.connectionIds ?? [options?.primaryConnectionId ?? null, options?.secondaryConnectionId ?? null];
@@ -430,6 +434,7 @@ export async function launchTool(toolId: string, options?: LaunchToolOptions): P
                             maxConnections: connectionSlots.max,
                             toolName: tool.name,
                             initialConnectionIds: selectedIds,
+                            connectionTypes: resolveSupportedConnectionTypes(tool.features),
                         },
                         tool.features?.enabledForPowerPlatformAPI === true,
                     );
@@ -457,10 +462,11 @@ export async function launchTool(toolId: string, options?: LaunchToolOptions): P
                 // Regular single-connection flow - prompt if no stored connection
                 logInfo("Showing connection selection modal for new instance...");
                 try {
-                    const { connectionId: selectedConnectionId, impersonationUser } = await openSelectConnectionModal(null, tool.name, tool.features?.enabledForPowerPlatformAPI === true);
+                    const { connectionId: selectedConnectionId, impersonationUser } = await openSelectConnectionModal(null, tool.name, tool.features?.enabledForPowerPlatformAPI === true, false, resolveSupportedConnectionTypes(tool.features));
                     logInfo("Connection established. Continuing with tool launch...");
                     if (selectedConnectionId) {
                         primaryConnectionId = selectedConnectionId;
+                        connectionIds[0] = selectedConnectionId;
                         impersonationUsers[0] = impersonationUser;
                     } else {
                         throw new Error("No connection was selected");
@@ -1314,6 +1320,8 @@ export async function restoreSession(): Promise<void> {
             // Saved connection IDs are passed so the tool opens without prompting
             // when authentication can be restored silently.
             for (const toolInfo of session.openTools) {
+                const savedTool = await window.toolboxAPI.getTool(toolInfo.toolId);
+                if (!savedTool) continue;
                 // Attempt silent re-authentication for each saved connection.
                 // If the token is still valid it will be reused directly.
                 // If it can be refreshed (client-secret, username/password, stored
@@ -1323,7 +1331,12 @@ export async function restoreSession(): Promise<void> {
                 // appropriate connection modal (single or multi, with tool name).
                 const connectionIds = await authenticateRestoredSlots(
                     copyConnectionSlots(toolInfo),
-                    (connectionId) => window.toolboxAPI.connections.authenticate(connectionId),
+                    async (connectionId) => {
+                        const connection = await window.toolboxAPI.connections.getById(connectionId);
+                        if (!connection) throw new Error("Saved connection no longer exists.");
+                        assertConnectionCompatible(connection, savedTool.features);
+                        await window.toolboxAPI.connections.authenticate(connectionId);
+                    },
                     (slotIndex, authError) => {
                         logWarn("Connection authentication failed on session restore", {
                             toolId: toolInfo.toolId,
@@ -1372,8 +1385,8 @@ async function setToolConnectionSlots(instanceId: string, connectionIds: Connect
             clearedSlots.add(slotIndex);
         }
     }
-    await window.toolboxAPI.setToolConnectionSlots(tool.toolId, normalizedConnectionIds);
     await window.toolboxAPI.updateToolConnections(instanceId, normalizedConnectionIds);
+    await window.toolboxAPI.setToolConnectionSlots(tool.toolId, normalizedConnectionIds);
 
     tool.connectionIds = normalizedConnectionIds;
     tool.clearedConnectionSlots = Array.from(clearedSlots);
@@ -1607,7 +1620,7 @@ async function openConnectionSlotPicker(instanceId: string, slotIndex: number): 
         const { openSelectConnectionModal } = await import("./connectionManagement");
         const connectionIds = [...(tool.connectionIds ?? [tool.connectionId, tool.secondaryConnectionId])];
         const currentConnectionId = connectionIds[slotIndex] ?? null;
-        const result = await openSelectConnectionModal(currentConnectionId, tool.tool.name, tool.tool.features?.enabledForPowerPlatformAPI === true, Boolean(currentConnectionId));
+        const result = await openSelectConnectionModal(currentConnectionId, tool.tool.name, tool.tool.features?.enabledForPowerPlatformAPI === true, Boolean(currentConnectionId), resolveSupportedConnectionTypes(tool.tool.features));
         if (result.cleared) {
             connectionIds[slotIndex] = null;
             await setToolConnectionSlots(instanceId, connectionIds);
@@ -1918,7 +1931,7 @@ export async function openToolSecondaryConnectionModal(): Promise<void> {
             connectionId: selectedConnectionId,
             impersonationUser,
             cleared,
-        } = await openSelectConnectionModal(activeTool.secondaryConnectionId, activeTool.tool?.name, false, Boolean(activeTool.secondaryConnectionId));
+        } = await openSelectConnectionModal(activeTool.secondaryConnectionId, activeTool.tool?.name, activeTool.tool.features?.enabledForPowerPlatformAPI === true, Boolean(activeTool.secondaryConnectionId), resolveSupportedConnectionTypes(activeTool.tool.features));
 
         if (cleared && activeToolId) {
             await setToolSecondaryConnection(activeToolId, null);
@@ -2093,14 +2106,15 @@ export function initializeInvocationBanner(): void {
  * PROVIDE_INVOCATION_CONNECTIONS.
  */
 export function initializeInvocationConnectionsPrompt(): void {
-    window.toolboxAPI.onInvocationConnectionsPrompt(async ({ requestId, toolName, minConnections, maxConnections, inheritedConnectionIds }) => {
+    window.toolboxAPI.onInvocationConnectionsPrompt(async ({ requestId, toolName, minConnections, maxConnections, inheritedConnectionIds, features }) => {
         try {
             const result = await openSelectMultiConnectionModal({
                 minConnections,
                 maxConnections,
                 toolName,
                 initialConnectionIds: inheritedConnectionIds,
-            });
+                connectionTypes: resolveSupportedConnectionTypes(features),
+            }, features?.enabledForPowerPlatformAPI === true);
             const connectionIds = [...result.connectionIds];
             if (!connectionIds[0] && inheritedConnectionIds[0]) connectionIds[0] = inheritedConnectionIds[0];
             await window.toolboxAPI.provideInvocationConnections(requestId, {

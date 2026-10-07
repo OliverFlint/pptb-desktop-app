@@ -57,6 +57,8 @@ TypeScript type definitions for Power Platform ToolBox APIs, plus a built-in CLI
 
 ## Installation
 
+The local development package also includes `financeOperationsAPI.d.ts` for Dynamics 365 Finance & Operations OData. Declare `features.connectionTypes: ["financeOperations"]` in your tool package and reference `@pptb/types/financeOperationsAPI`. This API is available on the desktop app's `finops-connection` branch; the updated package has not been published. See the [F&O testing and API guide](../../docs/FINANCE_OPERATIONS_MANUAL_TESTING.md) for authentication, paging, composite keys, and a sample tool.
+
 ```bash
 npm install --save-dev @pptb/types
 ```

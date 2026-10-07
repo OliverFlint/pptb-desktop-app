@@ -3,6 +3,7 @@
  */
 
 import { CspExceptions } from "./common";
+import type { ConnectionType } from "./connection";
 
 /**
  * A single entry from the capability tag registry.
@@ -22,6 +23,8 @@ export interface CapabilityTagEntry {
  * Tool features configuration
  */
 export interface ToolFeatures {
+    /** Supported products; omitted declarations support Dataverse only. */
+    connectionTypes?: ConnectionType[];
     /** Exact count or permitted range of connections used by this tool. */
     connections?: number | { min?: number; max?: number };
     /**

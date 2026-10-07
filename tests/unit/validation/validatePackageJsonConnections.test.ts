@@ -19,6 +19,26 @@ const validPackage = (features: ToolPackageJson["features"]): ToolPackageJson =>
 });
 
 describe("package.json features.connections validation", () => {
+    it.each([["dataverse"], ["financeOperations"], ["dataverse", "financeOperations"]].map((types) => [types]))("accepts declared products %p", async (connectionTypes) => {
+        const pkg = validPackage({ connections: 1, connectionTypes: connectionTypes as Array<"dataverse" | "financeOperations"> });
+        for (const validate of [validatePackageJson, mirroredValidator.validatePackageJson]) {
+            expect((await validate(pkg, { skipUrlChecks: true })).valid).toBe(true);
+        }
+    });
+
+    it.each([null, "financeOperations", [], ["unknown"], ["dataverse", "dataverse"]].map((types) => [types]))("rejects invalid declared products %p", async (connectionTypes) => {
+        const pkg = validPackage({ connections: 1, connectionTypes } as ToolPackageJson["features"]);
+        for (const validate of [validatePackageJson, mirroredValidator.validatePackageJson]) {
+            expect((await validate(pkg, { skipUrlChecks: true })).errors).toContain("features.connectionTypes must be a non-empty, unique array containing only 'dataverse' and 'financeOperations'");
+        }
+    });
+
+    it("rejects Power Platform API requirements on F&O-only tools", async () => {
+        const pkg = validPackage({ connections: 1, connectionTypes: ["financeOperations"], enabledForPowerPlatformAPI: true });
+        for (const validate of [validatePackageJson, mirroredValidator.validatePackageJson]) {
+            expect((await validate(pkg, { skipUrlChecks: true })).errors).toContain("features.enabledForPowerPlatformAPI requires support for Dataverse connections");
+        }
+    });
     it.each([0, 1, 2, 10])("accepts numeric connection count %i", async (connections) => {
         const result = await validatePackageJson(validPackage({ connections }), { skipUrlChecks: true });
         expect(result.valid).toBe(true);

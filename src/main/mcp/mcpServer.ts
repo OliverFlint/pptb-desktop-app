@@ -7,10 +7,12 @@ import os from "os";
 import path from "path";
 import { isDeepStrictEqual } from "util";
 import { resolveConnectionSlots } from "../../common/connectionSlots";
+import { assertConnectionCompatible } from "../../common/connectionCompatibility";
 import { logError, logInfo } from "../../common/logger";
 import { Connection, McpClientConfigStatus, ToolManifest, ToolMetadata } from "../../common/types";
 import { AuthManager } from "../managers/authManager";
 import { ConnectionsManager } from "../managers/connectionsManager";
+import { FinanceOperationsManager } from "../managers/financeOperationsManager";
 import { DataverseManager } from "../managers/dataverseManager";
 import { HeadlessJobRecord, HeadlessToolInvocationManager } from "../managers/headlessToolInvocationManager";
 import { PowerPlatformManager } from "../managers/powerplatformManager";
@@ -285,6 +287,7 @@ export class McpServerManager {
     private connectionsManager: ConnectionsManager | null = null;
     private authManager: AuthManager | null = null;
     private dataverseManager: DataverseManager | null = null;
+    private financeOperationsManager: FinanceOperationsManager | null = null;
     private powerPlatformManager: PowerPlatformManager | null = null;
     private expectedToken: string;
     private agentToolsCache: { tools: AgentTool[] } | null = null;
@@ -333,6 +336,7 @@ export class McpServerManager {
         this.connectionsManager = connectionsManager;
         this.authManager = authManager;
         this.dataverseManager = new DataverseManager(connectionsManager, authManager);
+        this.financeOperationsManager = new FinanceOperationsManager(connectionsManager, authManager);
         this.powerPlatformManager = new PowerPlatformManager(connectionsManager, authManager);
     }
 
@@ -645,6 +649,7 @@ export class McpServerManager {
             const matches = savedConnections.filter((connection) => connection.name.trim().toLowerCase() === name.trim().toLowerCase());
             if (matches.length === 0) throw new Error(`No saved connection found with name '${name}'.`);
             if (matches.length > 1) throw new Error(`Multiple connections found with name '${name}'. Please make names unique.`);
+            assertConnectionCompatible(matches[0], manifest.features);
             return matches[0];
         });
         const authContexts: ResolvedHeadlessAuthContext[] = [];
@@ -1061,6 +1066,7 @@ export class McpServerManager {
                                         settingsManager: this.settingsManager,
                                         connectionsManager: this.connectionsManager ?? undefined,
                                         dataverseManager: this.dataverseManager ?? undefined,
+                                        financeOperationsManager: this.financeOperationsManager ?? undefined,
                                         powerPlatformManager: this.powerPlatformManager ?? undefined,
                                     },
                                 );

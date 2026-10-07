@@ -11,6 +11,7 @@ import {
     AGENT_INVOCATION_CHANNELS,
     CONNECTION_CHANNELS,
     DATAVERSE_CHANNELS,
+    FINANCE_OPERATIONS_CHANNELS,
     DATAVERSE_HEADER_CONSENT_CHANNELS,
     EVENT_CHANNELS,
     FILESYSTEM_CHANNELS,
@@ -42,6 +43,9 @@ import {
     ToolConcernReportSubmission,
     ToolIdeaSubmission,
 } from "../common/types";
+import type { FinanceOperationsMethod, FinanceOperationsOptions } from "../common/financeOperationsApi";
+import { FinanceOperationsManager } from "./managers/financeOperationsManager";
+import { validateFinanceOperationsHeaders } from "./utilities/financeOperationsHttp";
 import { AuthManager } from "./managers/authManager";
 import { AutoUpdateManager } from "./managers/autoUpdateManager";
 import { BrowserManager } from "./managers/browserManager";
@@ -110,6 +114,7 @@ class ToolBoxApp {
     private authManager: AuthManager;
     private terminalManager: TerminalManager;
     private dataverseManager: DataverseManager;
+    private financeOperationsManager: FinanceOperationsManager;
     private dataverseHeaderConsentManager: DataverseHeaderConsentManager;
     private powerPlatformManager: PowerPlatformManager;
     private toolFilesystemAccessManager: ToolFileSystemAccessManager;
@@ -170,6 +175,7 @@ class ToolBoxApp {
             this.authManager = new AuthManager(this.browserManager);
             this.terminalManager = new TerminalManager();
             this.dataverseManager = new DataverseManager(this.connectionsManager, this.authManager);
+        this.financeOperationsManager = new FinanceOperationsManager(this.connectionsManager, this.authManager);
             this.dataverseHeaderConsentManager = new DataverseHeaderConsentManager(
                 this.settingsManager,
                 () => this.mainWindow?.webContents ?? null,
@@ -476,6 +482,7 @@ class ToolBoxApp {
         ipcMain.removeHandler(UPDATE_CHANNELS.GET_VERSION_COMPATIBILITY_INFO);
 
         // Dataverse handlers
+        ipcMain.removeHandler(FINANCE_OPERATIONS_CHANNELS.REQUEST);
         ipcMain.removeHandler(DATAVERSE_CHANNELS.CREATE);
         ipcMain.removeHandler(DATAVERSE_CHANNELS.RETRIEVE);
         ipcMain.removeHandler(DATAVERSE_CHANNELS.UPDATE);
@@ -757,7 +764,11 @@ class ToolBoxApp {
         });
 
         ipcMain.handle(CONNECTION_CHANNELS.UPDATE_CONNECTION, (_, id, updates) => {
+            const previous = this.connectionsManager.getConnectionById(id);
             this.connectionsManager.updateConnection(id, updates);
+            const current = this.connectionsManager.getConnectionById(id);
+            const authFields = ["url", "authenticationType", "clientId", "tenantId", "clientSecret", "username", "password"] as const;
+            if (authFields.some((field) => previous?.[field] !== current?.[field])) this.authManager.clearConnectionCache(id);
             this.api.emitEvent(ToolBoxEvent.CONNECTION_UPDATED, { id, updates });
         });
 
@@ -769,6 +780,7 @@ class ToolBoxApp {
             const deletionBlocker = this.toolWindowManager?.getConnectionDeletionBlocker(id) ?? null;
             if (deletionBlocker) throw new Error(deletionBlocker);
             this.connectionsManager.deleteConnection(id);
+            this.authManager.clearConnectionCache(id);
             this.settingsManager.removeConnectionFromToolSlots(id);
             this.api.emitEvent(ToolBoxEvent.CONNECTION_DELETED, { id });
         });
@@ -1934,6 +1946,19 @@ class ToolBoxApp {
                 }
             },
         );
+
+        ipcMain.handle(FINANCE_OPERATIONS_CHANNELS.REQUEST, async (event, method: FinanceOperationsMethod, path: string, body: unknown, options: FinanceOperationsOptions = {}) => {
+            try {
+                const connectionId = resolveToolConnectionForRequest(this.toolWindowManager, event.sender.id, options.connectionTarget);
+                if (this.connectionsManager.getConnectionById(connectionId)?.connectionType !== "financeOperations") throw new Error("This API requires a Finance & Operations connection.");
+                const headers = validateFinanceOperationsHeaders(options.headers);
+                await this.dataverseHeaderConsentManager.authorize(event.sender, "Send an F&O OData request", headers, "financeOperations");
+                return { ok: true, response: await this.financeOperationsManager.request(connectionId, method, path, body, { ...options, headers }) };
+            } catch (error) {
+                const details = error as Error & { code?: string; status?: number; requestId?: string; retryAfter?: string };
+                return { ok: false, error: { message: details.message, code: details.code, status: details.status, requestId: details.requestId, retryAfter: details.retryAfter } };
+            }
+        });
 
         // Dataverse API handlers
         // All handlers automatically get the connectionId from the calling tool's WebContents

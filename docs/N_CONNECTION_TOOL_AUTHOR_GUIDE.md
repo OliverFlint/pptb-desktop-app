@@ -24,6 +24,23 @@ These examples declare exactly three, zero to three, one to four, and no connect
 
 The first `min` slots must be assigned. A multi-slot range with no initial assignments opens the selector; when `min` is zero the user can confirm without assigning anything. Exact zero skips selection and hides connection controls. Declaring optional capacity means your tool must handle missing connections explicitly.
 
+## Declare Supported Connection Types
+
+`features.connectionTypes` declares the products a tool supports independently of its connection count. Omission preserves Dataverse-only behavior for existing tools. The array must be non-empty, unique, and contain only `"dataverse"` and `"financeOperations"`.
+
+```json
+{
+    "features": {
+        "connections": { "min": 1, "max": 3 },
+        "connectionTypes": ["dataverse", "financeOperations"]
+    }
+}
+```
+
+A mixed declaration allows either product in any slot. Check the safe connection getter's `connectionType` before choosing an API; older hosts can omit the field, which means Dataverse. A mismatched assignment fails compatibility validation. Tools requiring `enabledForPowerPlatformAPI` can use only enabled Dataverse client-secret connections.
+
+F&O authentication and `window.financeOperationsAPI` are available in the local `finops-connection` build. See the [manual testing and API guide](FINANCE_OPERATIONS_MANUAL_TESTING.md). Set `features.minAPI` to the first supporting desktop release when that version is finalized; no supporting release has been published yet.
+
 ## Address Slots
 
 API targets are zero-based: 0 is primary, 1 is secondary, and 2 is the third connection. The legacy strings `"primary"` and `"secondary"` remain valid aliases for indexes 0 and 1.

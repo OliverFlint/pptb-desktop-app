@@ -30,6 +30,7 @@
     "index.d.ts",
     "toolboxAPI.d.ts",
     "dataverseAPI.d.ts",
+    "financeOperationsAPI.d.ts",
     "powerplatformAPI.d.ts",
     "pptbConfig.d.ts",
     "toolManifest.d.ts",

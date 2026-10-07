@@ -24,6 +24,7 @@ export interface Configurations {
 }
 
 export interface Features {
+    connectionTypes?: Array<"dataverse" | "financeOperations">;
     connections?: number | { min?: number; max?: number };
     multiConnection?: "required" | "optional" | "none";
     connectionRequirement?: "required" | "optional";
@@ -336,13 +337,21 @@ export async function validatePackageJson(packageJson: ToolPackageJson, options:
         if (features === null || typeof features !== "object" || Array.isArray(features)) {
             errors.push("features must be a non-array object with optional 'connections', 'multiConnection', 'connectionRequirement', 'minAPI', and 'enabledForPowerPlatformAPI' properties");
         } else {
-            const VALID_FEATURE_KEYS = ["connections", "multiConnection", "connectionRequirement", "minAPI", "enabledForPowerPlatformAPI"];
+            const VALID_FEATURE_KEYS = ["connections", "connectionTypes", "multiConnection", "connectionRequirement", "minAPI", "enabledForPowerPlatformAPI"];
             const invalidKeys = Object.keys(features).filter((k) => !VALID_FEATURE_KEYS.includes(k));
             if (invalidKeys.length > 0) {
                 errors.push(`features can only contain ${VALID_FEATURE_KEYS.map((k) => `'${k}'`).join(", ")} properties. Invalid properties: ${invalidKeys.join(", ")}`);
             }
 
             const usesModernConnections = features.connections !== undefined;
+            if (features.connectionTypes !== undefined) {
+                const types = features.connectionTypes;
+                if (!Array.isArray(types) || types.length === 0 || types.some((type) => type !== "dataverse" && type !== "financeOperations") || new Set(types).size !== types.length) {
+                    errors.push("features.connectionTypes must be a non-empty, unique array containing only 'dataverse' and 'financeOperations'");
+                } else if (features.enabledForPowerPlatformAPI === true && !types.includes("dataverse")) {
+                    errors.push("features.enabledForPowerPlatformAPI requires support for Dataverse connections");
+                }
+            }
             const usesLegacyConnectionFields = features.multiConnection !== undefined || features.connectionRequirement !== undefined;
             if (usesModernConnections && usesLegacyConnectionFields) {
                 errors.push("features.connections cannot be combined with legacy features.multiConnection or features.connectionRequirement; remove the legacy fields");

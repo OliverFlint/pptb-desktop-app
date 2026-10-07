@@ -27,6 +27,18 @@ describe("MCP positional connections over HTTP", () => {
         tokenExpiry: new Date(Date.now() + 300_000).toISOString(),
     }));
 
+    it("rejects incompatible named connections before authentication and invocation", async () => {
+        (manager as any).connectionsManager = { getConnections: () => [{ ...connections[0], connectionType: "financeOperations" }] };
+        const authenticateInteractive = jest.fn();
+        (manager as any).authManager = { authenticateInteractive };
+        const response = await client.callTool({ name: "legacy", arguments: { __pptb: { executionMode: "headless", connectionName: "Environment 0" } } });
+        expect(response.isError).toBe(true);
+        expect(JSON.stringify(response.content)).toContain("not compatible");
+        expect(authenticateInteractive).not.toHaveBeenCalled();
+        expect(invokeHeadlessTool).not.toHaveBeenCalled();
+        expect(launchToolWithContext).not.toHaveBeenCalled();
+    });
+
     beforeEach(async () => {
         jest.clearAllMocks();
         directory = fs.mkdtempSync(path.join(os.tmpdir(), "pptb-mcp-connections-"));

@@ -248,7 +248,7 @@ ${sortingUtilities}
                     </div>
                     \${browserBadge ? \`<div class="connection-item-meta-right">\${browserBadge}</div>\` : ''}
                 </div>
-                <label class="impersonate-checkbox-row" onclick="event.stopPropagation()">
+                <label class="impersonate-checkbox-row" style="display: \${conn.connectionType === 'financeOperations' ? 'none' : ''}" onclick="event.stopPropagation()">
                     <input type="checkbox" class="impersonate-checkbox" data-connection-id="\${safeId}" data-list="\${idPrefix}" \${impersonateConnectionKeys.has(idPrefix + ':' + conn.id) ? 'checked' : ''} />
                     Impersonate as another user
                 </label>
@@ -693,7 +693,7 @@ ${sortingUtilities}
             return '<div class="connection-item ' + (selected ? "authenticated" : "") + '" data-connection-id="' + escapeHtml(connection.id) + '">' +
                 '<div class="connection-header"><div class="connection-name">' + escapeHtml(connection.name) + '</div><div class="connection-actions">' + selectionControl + '</div></div>' +
                 '<div class="connection-url">' + escapeHtml(connection.url) + '</div><div class="connection-item-footer"><div class="connection-item-meta-left"><span class="' + envClass + '">' + escapeHtml(connection.environment) + '</span><span class="auth-type-badge">' + escapeHtml(formatAuthType(connection.authenticationType)) + '</span>' + ppApi + category + '</div></div>' +
-                '<label class="impersonate-checkbox-row"><input type="checkbox" class="slot-impersonate-checkbox" data-connection-id="' + escapeHtml(connection.id) + '" ' + (impersonateSlots.has(activeSlot) ? "checked" : "") + ' />Impersonate as another user</label>' +
+                '<label class="impersonate-checkbox-row" style="display: ' + (connection.connectionType === 'financeOperations' ? 'none' : '') + '"><input type="checkbox" class="slot-impersonate-checkbox" data-connection-id="' + escapeHtml(connection.id) + '" ' + (impersonateSlots.has(activeSlot) ? "checked" : "") + ' />Impersonate as another user</label>' +
                 (duplicate ? '<small class="slot-duplicate-card-note"><span aria-hidden="true">&#9888;</span><span>Also assigned to another slot</span></small>' : "") + '</div>';
         }).join("");
         list.querySelectorAll(".connect-button").forEach((button) => {
@@ -765,6 +765,7 @@ ${sortingUtilities}
             pendingConnectionIds.delete(payload.data.connectionId);
             const slotIndex = Number(match[1]);
             slotIds[slotIndex] = payload.data.connectionId;
+            if (allConnections.find((connection) => connection.id === payload.data.connectionId)?.connectionType === "financeOperations") impersonateSlots.delete(slotIndex);
             connectedSlots.add(slotIndex);
             activeSlot = slotIndex;
             renderRail();

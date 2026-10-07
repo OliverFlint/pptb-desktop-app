@@ -186,6 +186,8 @@ export const test = base.extend<AppFixtures>({
                 { id: "e2e-invocation-callee", name: "E2E Invocation Callee", features: { connections: { min: 1, max: 4 } } },
                 { id: "e2e-four-connection-range", name: "E2E Four Connection Range", features: { connections: { min: 3, max: 4 } } },
                 { id: "e2e-single-connection", name: "E2E Single Connection" },
+                { id: "e2e-finops-connection", name: "E2E F&O Connection", features: { connections: 1, connectionTypes: ["financeOperations"] } },
+                { id: "e2e-mixed-connections", name: "E2E Mixed Connections", features: { connections: 2, connectionTypes: ["dataverse", "financeOperations"] } },
                 { id: "e2e-no-connection", name: "E2E No Connection", features: { connections: 0 } },
             ];
             const installedTools = toolDefinitions.map((tool) => {
@@ -240,6 +242,12 @@ export const test = base.extend<AppFixtures>({
                                 url: "https://prod.crm.dynamics.com",
                                 environment: "Production",
                                 authenticationType: "interactive",
+                                createdAt: "2026-10-01T00:00:00.000Z",
+                            },
+                            {
+                                id: "e2e-finops", name: "E2E Finance Operations", connectionType: "financeOperations",
+                                url: "https://finops.operations.dynamics.com", environment: "Dev", authenticationType: "interactive",
+                                clientId: "11111111-1111-1111-1111-111111111111", tenantId: "22222222-2222-2222-2222-222222222222",
                                 createdAt: "2026-10-01T00:00:00.000Z",
                             },
                         ],

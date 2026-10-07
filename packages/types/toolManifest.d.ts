@@ -10,6 +10,8 @@ export interface ToolConnectionRange {
 
 /** Feature declarations supported in a tool package.json `features` object. */
 export interface ToolPackageFeatures {
+    /** Supported products; defaults to Dataverse. Must be non-empty and unique. */
+    connectionTypes?: Array<"dataverse" | "financeOperations">;
     /** Exact count from 0 to 10, or a range with 0 <= min <= max <= 10. */
     connections?: ToolConnectionRequirement;
     /**

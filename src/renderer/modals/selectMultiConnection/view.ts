@@ -1,5 +1,6 @@
 import { escapeHtml } from "../../utils/toolIconResolver";
 import { getModalStyles } from "../sharedStyles";
+import type { ConnectionType } from "../../../common/types/connection";
 
 export interface ModalViewTemplate {
     styles: string;
@@ -11,6 +12,7 @@ export interface SelectMultiConnectionModalOptions {
     maxConnections: number;
     toolName?: string;
     initialConnectionIds?: Array<string | null>;
+    connectionTypes?: ConnectionType[];
 }
 
 /**

@@ -27,6 +27,16 @@ const catalogRow = {
 };
 
 describe("Supabase tools_catalog mapping", () => {
+    it.each([["financeOperations"], ["dataverse", "financeOperations"]].map((types) => [types]))("preserves connection types in native and serialized registry values %p", (connectionTypes) => {
+        for (const value of [connectionTypes, JSON.stringify(connectionTypes)]) {
+            expect(mapSupabaseToolRow({ ...catalogRow, connection_types: value }).features?.connectionTypes).toEqual(connectionTypes);
+        }
+        expect(mapSupabaseToolRow(catalogRow).features?.connectionTypes).toBeUndefined();
+    });
+
+    it.each([[], ["unknown"], ["dataverse", "dataverse"]].map((types) => [types]))("rejects malformed registry type declarations %p", (connectionTypes) => {
+        expect(() => mapSupabaseToolRow({ ...catalogRow, connection_types: connectionTypes })).toThrow();
+    });
     it("maps current release metadata and typed feature fields", () => {
         expect(mapSupabaseToolRow(catalogRow)).toMatchObject({
             id: "catalog-tool",
@@ -227,7 +237,7 @@ describe("ToolRegistryManager Supabase rollout and install", () => {
     it("persists release metadata on install and uses registry install for updates", async () => {
         const extractedPath = path.join(toolsDirectory, "extracted");
         fs.mkdirSync(extractedPath, { recursive: true });
-        fs.writeFileSync(path.join(extractedPath, "package.json"), JSON.stringify({ name: "@contoso/catalog-tool", version: "2.3.0" }));
+        fs.writeFileSync(path.join(extractedPath, "package.json"), JSON.stringify({ name: "@contoso/catalog-tool", version: "2.3.0", features: { connections: 1, connectionTypes: ["financeOperations"] } }));
 
         const release = mapSupabaseToolRow({ ...catalogRow, connections: '{"max":3,"min":0}' });
         const manager = new ToolRegistryManager(toolsDirectory, "https://supabase.example", "anon-key");
@@ -240,7 +250,7 @@ describe("ToolRegistryManager Supabase rollout and install", () => {
             version: "2.3.0",
             sourceUrl: catalogRow.download,
             readmeUrl: catalogRow.readme_url,
-            features: release.features,
+            features: { ...release.features, connectionTypes: ["financeOperations"] },
             minAPI: "1.2.0",
             mcpHeadlessEnabled: true,
             maturity: "verified",
@@ -248,6 +258,7 @@ describe("ToolRegistryManager Supabase rollout and install", () => {
         const persistedManifest = JSON.parse(fs.readFileSync(path.join(toolsDirectory, "manifest.json"), "utf-8")).tools[0];
         expect(persistedManifest.readmeUrl).toBe(catalogRow.readme_url);
         expect(persistedManifest.features.connections).toEqual({ min: 0, max: 3 });
+        expect(persistedManifest.features.connectionTypes).toEqual(["financeOperations"]);
         expect(persistedManifest).not.toHaveProperty("readme");
 
         const appManager = new ToolManager(toolsDirectory);

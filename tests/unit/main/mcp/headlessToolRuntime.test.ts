@@ -3,6 +3,7 @@
 import { pathToFileURL } from "url";
 import type { ConnectionTarget } from "../../../../src/common/connectionSlots";
 import type { Connection, ToolManifest } from "../../../../src/common/types";
+import type { FinanceOperationsAPI } from "../../../../src/common/financeOperationsApi";
 import { invokeHeadlessTool, type HeadlessInvokeContext, type HeadlessRuntimeServices } from "../../../../src/main/mcp/headlessToolRuntime";
 
 jest.mock("fs", () => ({
@@ -12,6 +13,7 @@ jest.mock("../../../../src/common/logger", () => ({ logInfo: jest.fn(), logError
 
 type SafeConnection = Record<string, unknown> | null;
 interface RuntimeGlobals {
+    financeOperationsAPI: FinanceOperationsAPI;
     toolboxAPI: {
         getToolContext: () => Promise<Record<string, unknown>>;
         connections: {
@@ -50,6 +52,7 @@ describe("headless runtime connection slots", () => {
     const getAllEntitiesMetadata = jest.fn().mockResolvedValue([]);
     const executeBatch = jest.fn().mockResolvedValue([]);
     const request = jest.fn().mockResolvedValue({ ok: true });
+    const financeRequest = jest.fn().mockResolvedValue({ status: 200, headers: {}, body: { value: [] } });
     const services = {
         connectionsManager: { getConnectionById, getConnections: jest.fn(() => connections) },
         dataverseManager: {
@@ -59,6 +62,7 @@ describe("headless runtime connection slots", () => {
             withAdditionalHeaders: jest.fn((_headers: unknown, operation: () => Promise<unknown>) => operation()),
         },
         powerPlatformManager: { request },
+        financeOperationsManager: { request: financeRequest },
     } as unknown as HeadlessRuntimeServices;
 
     function invoke(overrides: Partial<HeadlessInvokeContext>, operation: (apis: RuntimeGlobals, context: HeadlessInvokeContext) => Promise<Record<string, unknown>>) {
@@ -75,6 +79,54 @@ describe("headless runtime connection slots", () => {
     }
 
     beforeEach(() => jest.clearAllMocks());
+
+    it("rejects incompatible assigned slots before executing a headless tool", async () => {
+        getConnectionById.mockReturnValueOnce({ ...connections[0], connectionType: "financeOperations" });
+        await expect(invoke({ connectionIds: ["conn-0"] }, async () => ({}))).rejects.toThrow("not compatible");
+        expect(mockInvokeHeadless).not.toHaveBeenCalled();
+        expect(queryData).not.toHaveBeenCalled();
+    });
+
+    it("accepts a declared F&O slot and returns safe product metadata", async () => {
+        const previousFeatures = manifest.features;
+        const previousType = connections[0].connectionType;
+        manifest.features = { connections: 1, connectionTypes: ["financeOperations"] };
+        connections[0].connectionType = "financeOperations";
+        try {
+            await invoke({ connectionIds: ["conn-0"] }, async ({ toolboxAPI }) => {
+                const connection = await toolboxAPI.connections.getConnection(0);
+                expect(connection).toMatchObject({ connectionType: "financeOperations" });
+                expect(connection).not.toHaveProperty("accessToken");
+                return {};
+            });
+            expect(mockInvokeHeadless).toHaveBeenCalled();
+        } finally {
+            manifest.features = previousFeatures;
+            connections[0].connectionType = previousType;
+        }
+    });
+
+    it("routes F&O through indexed slots, denies unapproved headers, and restores globals", async () => {
+        const previousFeatures = manifest.features;
+        const previousType = connections[2].connectionType;
+        const previousApi = (globalThis as unknown as RuntimeGlobals).financeOperationsAPI;
+        manifest.features = { connections: 3, connectionTypes: ["dataverse", "financeOperations"] };
+        connections[2].connectionType = "financeOperations";
+        try {
+            await invoke({ connectionIds: ["conn-0", null, "conn-2"] }, async ({ financeOperationsAPI }) => {
+                await expect(financeOperationsAPI.queryData("Rows", { connectionTarget: 2 })).resolves.toEqual({ value: [] });
+                await expect(financeOperationsAPI.queryData("Rows", { connectionTarget: 1 })).rejects.toThrow();
+                await expect(financeOperationsAPI.queryData("Rows", { connectionTarget: 2, headers: { Prefer: "return=minimal" } })).rejects.toThrow("prior desktop consent");
+                return {};
+            });
+            expect(financeRequest).toHaveBeenCalledTimes(1);
+            expect(financeRequest).toHaveBeenCalledWith("conn-2", "GET", "Rows", undefined, { connectionTarget: 2, headers: {} });
+            expect((globalThis as unknown as RuntimeGlobals).financeOperationsAPI).toBe(previousApi);
+        } finally {
+            manifest.features = previousFeatures;
+            connections[2].connectionType = previousType;
+        }
+    });
 
     it("routes numeric slots 2+ and secondary through the actual runtime APIs", async () => {
         await invoke({ connectionIds: connections.map((connection) => connection.id) }, async ({ toolboxAPI, dataverseAPI, powerplatformAPI }) => {
@@ -133,6 +185,8 @@ describe("headless runtime connection slots", () => {
 
     it.each([-1, 0.5, NaN, Infinity, "tertiary"])("rejects invalid target %s without invoking managers", async (target) => {
         await invoke({ connectionIds: ["conn-0", "conn-1", "conn-2"] }, async ({ toolboxAPI, dataverseAPI, powerplatformAPI }) => {
+            // Startup validates assignments; invalid API targets must do no further lookups.
+            getConnectionById.mockClear();
             const invalidTarget = target as ConnectionTarget;
             await expect(toolboxAPI.connections.getConnection(invalidTarget)).rejects.toThrow("Invalid connection target");
             await expect(dataverseAPI.queryData("accounts", invalidTarget)).rejects.toThrow("Invalid connection target");

@@ -27,7 +27,7 @@ export class DataverseHeaderConsentManager {
         private readonly timeoutMs = 120_000,
     ) {}
 
-    async authorize(sender: WebContents, operation: string, additionalHeaders?: Record<string, string>): Promise<DataverseAdditionalHeaders> {
+    async authorize(sender: WebContents, operation: string, additionalHeaders?: Record<string, string>, api?: "financeOperations"): Promise<DataverseAdditionalHeaders> {
         const headers = validateAndSnapshotHeaders(additionalHeaders);
         if (Object.keys(headers).length === 0) return headers;
 
@@ -35,6 +35,7 @@ export class DataverseHeaderConsentManager {
             sender,
             operation,
             Object.entries(headers).map(([name, value]) => ({ name, value })),
+            api,
         );
         return headers;
     }
@@ -63,16 +64,17 @@ export class DataverseHeaderConsentManager {
         return { requests: validatedRequests, additionalHeaders: headers };
     }
 
-    private async ensureConsent(sender: WebContents, operation: string, headers: Array<{ name: string; value: string; scope?: string }>): Promise<void> {
+    private async ensureConsent(sender: WebContents, operation: string, headers: Array<{ name: string; value: string; scope?: string }>, api?: "financeOperations"): Promise<void> {
         const identity = this.resolveToolIdentity(sender.id);
         if (!identity) throw new Error("Dataverse header consent denied: untrusted tool sender");
-        if (this.settingsManager.hasDataverseHeaderConsent(identity.toolId)) return;
+        if (this.settingsManager.hasDataverseHeaderConsent(api ? `financeOperations:${identity.toolId}` : identity.toolId)) return;
 
         return new Promise<void>((resolve, reject) => {
             this.queue.push({
                 sender,
                 request: Object.freeze({
                     requestId: randomUUID(),
+                    ...(api ? { api } : {}),
                     toolId: identity.toolId,
                     toolName: identity.toolName,
                     operation,
@@ -90,7 +92,7 @@ export class DataverseHeaderConsentManager {
         if (!pending || pending.request.requestId !== requestId || !(["allow-tool", "allow-once", "reject"] as string[]).includes(decision)) return false;
 
         if (decision === "allow-tool") {
-            this.settingsManager.grantDataverseHeaderConsent(pending.request.toolId);
+            this.settingsManager.grantDataverseHeaderConsent(pending.request.api ? `financeOperations:${pending.request.toolId}` : pending.request.toolId);
         }
         if (decision === "reject") {
             this.finishActive(new Error("Dataverse additional headers were rejected"));

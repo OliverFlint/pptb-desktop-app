@@ -25,6 +25,52 @@ function createManager() {
 }
 
 describe("ToolWindowManager connection slot routing", () => {
+    it("rejects an incompatible launch before creating a view", async () => {
+        const { manager, connectionsManager } = createManager();
+        connectionsManager.getConnectionById.mockReturnValue({ id: "finops", name: "F&O", connectionType: "financeOperations", url: "https://finops.example" } as any);
+        await expect(manager.launchTool("legacy-123-abc", { id: "legacy", name: "Legacy" } as any, "finops")).resolves.toBe(false);
+        expect((manager as any).toolViews.size).toBe(0);
+    });
+
+    it("rejects incompatible reassignment without changing existing slots or notifying the tool", async () => {
+        const { manager, connectionsManager } = createManager();
+        const view = new BrowserView();
+        const original = { connectionIds: ["primary-id", null, "third-id"], impersonatedUsers: [null, null, null] };
+        (manager as any).toolViews.set("tool-1", view);
+        (manager as any).toolConnectionInfo.set("tool-1", original);
+        connectionsManager.getConnectionById.mockReturnValue({ id: "finops", name: "F&O", connectionType: "financeOperations", url: "https://finops.example" } as any);
+        await expect(manager.updateToolConnections("tool-1", ["finops"])).rejects.toThrow("not compatible");
+        expect((manager as any).toolConnectionInfo.get("tool-1")).toBe(original);
+        expect(view.webContents.send).not.toHaveBeenCalled();
+    });
+
+    it("allows declared mixed types without compacting slots and rejects F&O impersonation", async () => {
+        const { manager, connectionsManager } = createManager();
+        const view = new BrowserView();
+        (manager as any).toolViews.set("tool-1", view);
+        (manager as any).toolConnectionFeatures.set("tool-1", { connectionTypes: ["dataverse", "financeOperations"] });
+        connectionsManager.getConnectionById.mockImplementation((id) => ({ id, name: id, url: `https://${id}.example`, connectionType: id === "finops" ? "financeOperations" : "dataverse" }) as any);
+        await manager.updateToolConnections("tool-1", ["primary-id", null, "finops"]);
+        expect((manager as any).toolConnectionInfo.get("tool-1").connectionIds).toEqual(["primary-id", null, "finops"]);
+        expect(() => manager.setImpersonation("tool-1", { azureactivedirectoryobjectid: "00000000-0000-0000-0000-000000000001" } as any, 2)).toThrow("requires a Dataverse connection");
+    });
+
+    it("applies the Power Platform API restriction before reassignment", async () => {
+        const { manager } = createManager();
+        (manager as any).toolViews.set("tool-1", new BrowserView());
+        (manager as any).toolConnectionFeatures.set("tool-1", { enabledForPowerPlatformAPI: true });
+        await expect(manager.updateToolConnections("tool-1", ["primary-id"])).rejects.toThrow("not compatible");
+    });
+
+    it("rejects an inherited incompatible connection before prompting or launching the callee", async () => {
+        const { manager, mainWindow, connectionsManager } = createManager();
+        (manager as any).toolConnectionInfo.set("caller", { connectionIds: ["finops"], impersonatedUsers: [null] });
+        connectionsManager.getConnectionById.mockReturnValue({ id: "finops", name: "F&O", connectionType: "financeOperations", url: "https://finops.example" } as any);
+        const launch = jest.spyOn(manager, "launchTool");
+        await expect(manager.launchToolWithContext("caller", "callee", { id: "legacy", name: "Legacy", features: { connections: 2 } } as any, null, null, {})).rejects.toThrow("not compatible");
+        expect(launch).not.toHaveBeenCalled();
+        expect(mainWindow.webContents.send).not.toHaveBeenCalledWith("tool-window:invocation-prompt-connections", expect.anything());
+    });
     it("releases connection blockers as soon as a tool closes", async () => {
         const { manager, terminalManager } = createManager();
         const view = new BrowserView();

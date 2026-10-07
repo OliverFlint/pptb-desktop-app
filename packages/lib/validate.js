@@ -317,7 +317,7 @@ async function validatePackageJson(packageJson, options = {}) {
         if (features === null || typeof features !== "object" || Array.isArray(features)) {
             errors.push("features must be a non-array object with optional 'connections', 'multiConnection', 'connectionRequirement', 'minAPI', and 'enabledForPowerPlatformAPI' properties");
         } else {
-            const VALID_FEATURE_KEYS = ["connections", "multiConnection", "connectionRequirement", "minAPI", "enabledForPowerPlatformAPI"];
+            const VALID_FEATURE_KEYS = ["connections", "connectionTypes", "multiConnection", "connectionRequirement", "minAPI", "enabledForPowerPlatformAPI"];
             const featureKeys = Object.keys(features);
             const invalidKeys = featureKeys.filter((key) => !VALID_FEATURE_KEYS.includes(key));
 
@@ -326,6 +326,14 @@ async function validatePackageJson(packageJson, options = {}) {
             }
 
             const usesModernConnections = features.connections !== undefined;
+            if (features.connectionTypes !== undefined) {
+                const types = features.connectionTypes;
+                if (!Array.isArray(types) || types.length === 0 || types.some((type) => type !== "dataverse" && type !== "financeOperations") || new Set(types).size !== types.length) {
+                    errors.push("features.connectionTypes must be a non-empty, unique array containing only 'dataverse' and 'financeOperations'");
+                } else if (features.enabledForPowerPlatformAPI === true && !types.includes("dataverse")) {
+                    errors.push("features.enabledForPowerPlatformAPI requires support for Dataverse connections");
+                }
+            }
             const usesLegacyConnectionFields = features.multiConnection !== undefined || features.connectionRequirement !== undefined;
             if (usesModernConnections && usesLegacyConnectionFields) {
                 errors.push("features.connections cannot be combined with legacy features.multiConnection or features.connectionRequirement; remove the legacy fields");

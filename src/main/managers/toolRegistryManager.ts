@@ -8,6 +8,7 @@ import * as https from "https";
 import * as path from "path";
 import { pipeline } from "stream/promises";
 import { logError, logInfo, logWarn } from "../../common/logger";
+import { resolveSupportedConnectionTypes } from "../../common/connectionCompatibility";
 import { captureException } from "../../common/sentryHelper";
 import {
     CapabilityTagEntry,
@@ -96,6 +97,7 @@ interface SupabaseTool {
     multi_connection?: string | null;
     connection_requirement?: string | null;
     connections?: string | null;
+    connection_types?: unknown;
     enabled_for_power_platform_api?: boolean | null;
     mcp_enabled?: boolean | null;
     maturity_status?: string | null;
@@ -165,7 +167,12 @@ export function mapSupabaseToolRow(tool: SupabaseTool): ToolRegistryEntry {
     const analytics = Array.isArray(tool.tool_analytics) ? tool.tool_analytics[0] : tool.tool_analytics;
     const minAPI = tool.min_api;
     const modernConnections = getValidConnectionsFeature(tool.connections);
+    const declaredTypes = typeof tool.connection_types === "string" ? JSON.parse(tool.connection_types) : tool.connection_types;
+    const connectionTypes = declaredTypes === undefined || declaredTypes === null
+        ? undefined
+        : resolveSupportedConnectionTypes({ connectionTypes: declaredTypes });
     const features: ToolRegistryEntry["features"] = {
+        connectionTypes,
         ...(modernConnections !== undefined
             ? { connections: modernConnections }
             : {
@@ -922,7 +929,9 @@ export class ToolRegistryManager extends EventEmitter {
             sourceUrl: tool.downloadUrl,
             readmeUrl: tool.readmeUrl,
             cspExceptions: tool.cspExceptions || packageJson.cspExceptions, // Include CSP exceptions
-            features: tool.features || packageJson.features, // Include features from registry or package.json
+            features: tool.features
+                ? { ...tool.features, connectionTypes: tool.features.connectionTypes ?? packageJson.features?.connectionTypes }
+                : packageJson.features,
             categories: tool.categories,
             license: tool.license || packageJson.license,
             size: tool.size,
