@@ -7,6 +7,28 @@ import { validateAndSnapshotHeaders } from "./dataverseBatch";
 const MAX_BYTES = 20 * 1024 * 1024;
 const MAX_METADATA_BYTES = 100 * 1024 * 1024;
 
+/** Extract validation messages without exposing raw bodies or server stack traces. */
+function serviceErrorMessage(body: unknown, accessToken: string): string {
+    const messages: string[] = [];
+    function visit(value: unknown, depth = 0): void {
+        if (!value || typeof value !== "object" || depth > 5 || messages.length >= 8) return;
+        const record = value as Record<string, unknown>;
+        const message = typeof record.message === "string" ? record.message :
+            record.message && typeof record.message === "object" ? (record.message as Record<string, unknown>).value : undefined;
+        if (typeof message === "string" && message.trim()) {
+            const bounded = message.trim().slice(0, 2000);
+            if (!messages.includes(bounded)) messages.push(bounded);
+        }
+        for (const field of ["innererror", "innerError", "internalexception", "internalException"]) visit(record[field], depth + 1);
+        if (Array.isArray(record.details)) {
+            for (const detail of record.details.slice(0, 8)) visit(detail, depth + 1);
+        }
+    }
+    if (body && typeof body === "object") visit((body as Record<string, unknown>).error);
+    const message = messages.join(" | ") || "Request failed";
+    return (accessToken ? message.split(accessToken).join("[redacted]") : message).slice(0, 2000);
+}
+
 export class FinanceOperationsHttpError extends Error {
     readonly code = "FINANCE_OPERATIONS_HTTP_ERROR";
     constructor(message: string, readonly status?: number, readonly requestId?: string, readonly retryAfter?: string) {
@@ -97,9 +119,7 @@ export function financeOperationsHttp(url: URL, method: FinanceOperationsMethod,
                         }
                     }
                     if (status < 200 || status >= 300) {
-                        const serviceError = parsed as { error?: { message?: string | { value?: string } } } | undefined;
-                        const message = typeof serviceError?.error?.message === "string" ? serviceError.error.message : serviceError?.error?.message?.value;
-                        const safeMessage = (message || "Request failed").split(accessToken).join("[redacted]").slice(0, 2000);
+                        const safeMessage = serviceErrorMessage(parsed, accessToken);
                         reject(new FinanceOperationsHttpError(`F&O HTTP ${status}: ${safeMessage}`, status, responseHeaders["x-ms-request-id"] || responseHeaders["request-id"], responseHeaders["retry-after"]));
                     } else resolve({ status, headers: responseHeaders, ...(parsed !== undefined ? { body: parsed } : {}) });
                 } catch (error) { reject(error); }

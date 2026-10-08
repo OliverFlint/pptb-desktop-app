@@ -1,0 +1,17 @@
+{
+  "invocation": {
+    "version": "1.0.0",
+    "capabilities": ["finance-operations-odata-read"],
+    "prefill": { "properties": { "query": { "type": "string" } } },
+    "returnTopic": { "properties": { "page": { "type": "object" } } }
+  },
+  "agents": {
+    "version": "1.0.0",
+    "invokable": true,
+    "modes": ["two-way"],
+    "defaultMode": "two-way",
+    "timeoutMS": 120000,
+    "headless": true,
+    "headlessEntry": "dist/headless.js"
+  }
+}

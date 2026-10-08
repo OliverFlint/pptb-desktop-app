@@ -2253,6 +2253,8 @@ export async function loadSidebarConnections(): Promise<void> {
         const searchTerm = searchInput?.value ? searchInput.value.toLowerCase() : "";
         const selectedEnvironment = environmentFilter?.value || "";
         const selectedAuthType = authFilter?.value || "";
+        const typeFilter = document.getElementById("connections-type-filter") as HTMLSelectElement | null;
+        const selectedType = typeFilter?.value || "";
 
         // Get saved sort preference or default
         const savedSort = await getConnectionsSortPreference();
@@ -2289,7 +2291,7 @@ export async function loadSidebarConnections(): Promise<void> {
         const selectedCategory = categoryFilter?.value || "";
 
         // Update filter button indicator and one-click clear button visibility
-        const hasDropdownFilters = !!(selectedEnvironment || selectedAuthType || selectedCategory);
+        const hasDropdownFilters = !!(selectedType || selectedEnvironment || selectedAuthType || selectedCategory);
         const connectionsFilterBtn = document.getElementById("connections-filter-btn");
         if (connectionsFilterBtn) {
             connectionsFilterBtn.classList.toggle("has-active-filters", hasDropdownFilters);
@@ -2301,6 +2303,7 @@ export async function loadSidebarConnections(): Promise<void> {
 
         // Apply filters
         const filteredConnections = connections.filter((conn: Connection) => {
+            if (selectedType && resolveConnectionType(conn.connectionType) !== selectedType) return false;
             // Search filter (name or URL)
             if (searchTerm) {
                 const haystacks: string[] = [conn.name || "", conn.url || ""];
@@ -2557,6 +2560,12 @@ export async function loadSidebarConnections(): Promise<void> {
         }
 
         // Setup filter event listeners
+        if (typeFilter && !(typeFilter as any)._pptbBound) {
+            (typeFilter as any)._pptbBound = true;
+            typeFilter.addEventListener("change", () => {
+                loadSidebarConnections();
+            });
+        }
         if (environmentFilter && !(environmentFilter as any)._pptbBound) {
             (environmentFilter as any)._pptbBound = true;
             environmentFilter.addEventListener("change", () => {
@@ -2596,10 +2605,12 @@ export async function loadSidebarConnections(): Promise<void> {
 }
 
 /**
- * Clear only the dropdown filter selections (environment, auth type, category) for connections.
+ * Clear only the dropdown filter selections for connections.
  * Leaves the search input unchanged.
  */
 export function clearConnectionDropdownFilters(): void {
+    const typeFilter = document.getElementById("connections-type-filter") as HTMLSelectElement | null;
+    if (typeFilter) typeFilter.value = "";
     // Reset environment filter
     const environmentFilter = document.getElementById("connections-environment-filter") as HTMLSelectElement | null;
     if (environmentFilter) {

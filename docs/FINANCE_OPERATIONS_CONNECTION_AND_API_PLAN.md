@@ -1,6 +1,16 @@
 # Dynamics 365 Finance & Operations Connection and API Plan
 
-Status: Local UI and OData implementation available on `finops-connection`. Automated checks pass, and the user reported passing manual tests on 2026-10-08. Release rollout remains outstanding.
+Status as of 2026-10-08: implementation for phases 1–4 is available on `finops-connection`. Phase 2 is complete. Phases 1 and 3 await the remaining live verification; phase 4 has passed its desktop/headless acceptance criterion and awaits release preparation/publication. These remaining checks have not been waived.
+
+| Phase | Implementation status | Acceptance / outstanding work |
+| --- | --- | --- |
+| 1 — Authentication and contract | Implemented; both live authentication flows passed | Live paging unverified (insufficient data), renewal deferred, restricted-user check unavailable; sanitized fixture capture remains to be finalized |
+| 2 — Model, storage, compatibility | Complete | Automated migration, compatibility, product guards, and legacy regression checks passed |
+| 3 — Authentication and OData manager | Implemented; live reads, metadata, cross-company filtering, CRUD and action passed | Live paging, renewal, and restricted-user permission checks remain outstanding |
+| 4 — Exposure, headless, UX | Implemented; live desktop/headless read passed | Choose shipping versions, finish minimum-version compatibility metadata, publish matching packages, and coordinate registry rollout |
+| 5 — Batch / transactions | Not started; later scope | Not required for the initial phases 1–4 release |
+
+See the [manual testing record](FINANCE_OPERATIONS_MANUAL_TESTING.md#remaining-live-acceptance-checks) for individual results. Deferred or unavailable tests remain explicit verification gaps; they do not count as passes.
 
 ## Implementation progress
 
@@ -14,15 +24,21 @@ Safe browser/headless connection getters include product type. Dataverse/Power P
 
 The regular add/edit UI now exposes F&O, requires explicit app/tenant configuration, hides unsupported authentication and Power Platform controls, and labels saved connections. The desktop and headless `financeOperationsAPI` share a facade for service discovery, raw XML metadata, one-page queries, keyed CRUD, and general OData requests. The transport confines URLs to the selected `/data` endpoint, rejects redirects and protected headers, bounds time/size, and preserves structured HTTP error details. Only GET retries once after a 401. Custom-header approval is separate from Dataverse and can be revoked in Consent Review. A read-only local sample and [manual testing guide](FINANCE_OPERATIONS_MANUAL_TESTING.md) are included.
 
-Verification includes migration idempotence, mixed valid/invalid imports, sanitized exports, F&O configuration and URL validation, manifest-validator parity, credential-free tool metadata, and existing-API product guards. The user reported passing manual tests on 2026-10-08 after the metadata download fix; the precise environment and coverage were not recorded. The phases remain unchecked until their live/release acceptance criteria are satisfied.
+Automated verification covers migration idempotence, mixed valid/invalid imports, sanitized exports, configuration and URL validation, validator parity, safe tool metadata, compatibility routing, and product guards. Normalized connections form a discriminated union restricting F&O authentication and Power Platform fields.
 
-Validation: 533 unit tests pass in a clean Jest run, and 23 selected Electron tests pass. Typecheck, lint, desktop/CLI build, validation-package build, public declaration consumer checks, and `git diff --check` pass.
+Live verification passed on 2026-10-08: Microsoft Login, client-secret authentication, OData reads and metadata, cross-company filtering, headless MCP reads, CustomersV3 create/retrieve/update/delete with cleanup, and the collection-bound GetInstalledModules action (HTTP 200, Collection(Edm.String)). CustomersV3 used environment-assigned account numbering and explicit cross-company keyed requests; the final read returned 404 after deletion. Live paging is unavailable due to data volume, renewal is deferred at the user's request, and restricted permissions cannot be tested without a suitable user.
+
+Validation: 538 unit tests and 24 selected Electron tests pass. Typecheck, lint, desktop/CLI build, and `git diff --check` pass. Previous validation-package build and public declaration consumer checks passed; a package dry run confirms the F&O declaration is included. The headless sample passes config/query/paging-preservation/input/capability checks with a fixture API.
+
+The validation-error follow-up includes bounded nested OData validation messages, deduplicates messages, redacts the token, and excludes server stack traces. Its 35 focused transport/manager tests, typecheck, lint, and desktop/CLI build pass. The most recent full unit run above preceded these three additional error tests.
 
 The metadata follow-up raises the response limit to 100 MB and the default timeout to 120 seconds, and preserves cancellation reasons. Its 32 focused unit tests and four F&O Electron tests pass; build and lint also pass.
 
 Current checks include unit coverage for URL boundaries, composite keys, compressed JSON/XML/204 responses, token renewal and write non-replay, consent separation, preload errors, and indexed headless routing. Electron checks cover regular F&O create/edit, picker compatibility, and the real tool-to-main IPC path with fixture HTTP responses.
 
-Next: follow the manual guide against a sandbox, confirm both sign-in flows and entity permissions, exercise disposable writes/actions and paging/company filters, then prepare package/version and registry rollout. Batch helpers remain a later phase. Normalized discriminated-union typing remains a follow-up.
+The connection list now offers a product filter with clear-filter support. The read-only sample includes a headless entry and MCP declaration for comparing the same query in both runtimes.
+
+Next: complete the [remaining live acceptance checks](FINANCE_OPERATIONS_MANUAL_TESTING.md#remaining-live-acceptance-checks), then choose the first shipping desktop/types/validator versions, set the sample's corresponding `features.minAPI`, publish matching packages, and roll out the registry field. The sample currently targets this local branch; it does not claim compatibility with a published PPTB release. Batch helpers remain a later phase.
 
 ## Goal and scope
 
@@ -30,7 +46,7 @@ Add a Dynamics 365 Finance & Operations (F&O) connection type and a dedicated `F
 
 The first release includes interactive authentication and client-secret authentication, OData queries, CRUD, service discovery, raw CSDL metadata, and OData actions through a general request method. Batch/transaction helpers are a subsequent phase. Custom JSON services, the separate REST metadata service, data-management package APIs, on-premises deployments, certificate authentication, and username/password authentication are outside the initial scope.
 
-All names and signatures below are proposed contracts to implement, not currently available APIs.
+The API is available in local builds of this branch. The contract outline below describes the design; the matching internal and public declarations are the authoritative signatures.
 
 ## Platform facts informing the design
 
@@ -209,6 +225,8 @@ Each phase should be independently reviewable. Keep F&O creation unavailable in 
 
 ### [ ] Phase 1 — Authentication spike and contract confirmation
 
+Status: implemented; both authentication flows passed. Remaining acceptance work: live paging, deferred renewal, restricted-user verification, and final sanitized fixtures.
+
 - Verify configured-client interactive sign-in, loopback redirect, service-document probe, client-secret sign-in, and silent renewal against a sandbox.
 - Confirm resource/scope behavior and permissions with a restricted F&O user.
 - Capture sanitized fixtures for service discovery, CSDL, composite keys, paged responses, actions, and authorization failures.
@@ -216,7 +234,7 @@ Each phase should be independently reviewable. Keep F&O creation unavailable in 
 
 Exit: both authentication flows and a paged OData read work in a sandbox; registration instructions are reproducible. A live environment is required to close this phase; mocks alone cannot establish compatibility.
 
-### [ ] Phase 2 — Connection model, storage, and compatibility
+### [x] Phase 2 — Connection model, storage, and compatibility
 
 - Add normalized connection types, migration, product/auth validation, imports/exports, and safe metadata.
 - Add manifest allow-list resolution and validation while retaining existing slot semantics.
@@ -226,19 +244,27 @@ Exit: existing saved connections and old tools behave as before; incompatible as
 
 ### [ ] Phase 3 — Product-aware authentication and F&O OData manager
 
+Status: implemented; live CRUD, company filters, and action execution passed. Remaining verification gaps are listed below.
+
 - Refactor scopes/access probes, cache invalidation, refresh, and unattended behavior.
 - Implement service document, metadata, query, CRUD, and general requests with URL/key/header safeguards and normalized errors.
 - Add product guards to existing APIs.
 
 Exit: fixture-based transport coverage passes and sandbox verification covers both flows, CRUD, paging, company filters, and an available action.
 
+Live results: both authentication flows, CustomersV3 CRUD and cleanup, cross-company filtering, and GetInstalledModules action execution passed. Paging remains unverified due to data volume; token renewal is deferred and a restricted user is unavailable. Phase 3 remains open with these explicitly recorded verification gaps.
+
 ### [ ] Phase 4 — Tool exposure, headless support, and connection UX
+
+Status: local implementation and live execution acceptance complete; release preparation/publication outstanding.
 
 - Register IPC handlers and lifecycle cleanup; expose the browser and headless APIs.
 - Publish matching internal/public types, package references, version compatibility, and API documentation.
 - Enable F&O forms, badges, picker filtering, safe connection events, and a small sample tool.
 
 Exit: an F&O tool completes the same read in a desktop window and an unattended client-secret invocation; old Dataverse tools remain usable.
+
+Live desktop/headless acceptance: passed, user confirmed on 2026-10-08. Existing Dataverse compatibility is covered by the passing regression checks. Phase 4 remains open for the package/version publication work listed above; the local implementation and live execution criterion are complete.
 
 ### [ ] Phase 5 — Batch and transaction helpers
 

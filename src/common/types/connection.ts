@@ -37,7 +37,7 @@ export function normalizeFinanceOperationsUrl(value: string): string {
 }
 
 /** Shared validation for persistence and imports, including incomplete exports. */
-export function normalizeConnection(connection: Connection): Connection & { connectionType: ConnectionType } {
+export function normalizeConnection(connection: Connection): NormalizedConnection {
     const connectionType = resolveConnectionType(connection.connectionType);
     if (!["interactive", "clientSecret", "usernamePassword", "connectionString"].includes(connection.authenticationType)) {
         throw new Error(`Invalid authentication type: ${String(connection.authenticationType)}`);
@@ -52,7 +52,18 @@ export function normalizeConnection(connection: Connection): Connection & { conn
     if (connection.enabledForPowerPlatformAPI || connection.powerPlatformAccessToken !== undefined || connection.powerPlatformTokenExpiry !== undefined || connection.scopesForPowerPlatformAPI !== undefined) {
         throw new Error("Finance & Operations connections cannot enable Power Platform API access.");
     }
-    return { ...connection, connectionType, url: normalizeFinanceOperationsUrl(connection.url) };
+    return {
+        ...connection,
+        connectionType,
+        authenticationType: connection.authenticationType,
+        clientId: connection.clientId,
+        tenantId: connection.tenantId,
+        enabledForPowerPlatformAPI: false,
+        powerPlatformAccessToken: undefined,
+        powerPlatformTokenExpiry: undefined,
+        scopesForPowerPlatformAPI: undefined,
+        url: normalizeFinanceOperationsUrl(connection.url),
+    };
 }
 
 /**
@@ -124,6 +135,20 @@ export function isConnection(obj: unknown): obj is Connection {
         isSupportedConnectionConfiguration(conn)
     );
 }
+
+/** Validated records narrow authentication and configuration by product. */
+export type NormalizedConnection =
+    | (Connection & { connectionType: "dataverse" })
+    | (Connection & {
+          connectionType: "financeOperations";
+          authenticationType: "interactive" | "clientSecret";
+          clientId: string;
+          tenantId: string;
+          enabledForPowerPlatformAPI: false;
+          powerPlatformAccessToken?: never;
+          powerPlatformTokenExpiry?: never;
+          scopesForPowerPlatformAPI?: never;
+      });
 
 function isSupportedConnectionConfiguration(connection: Record<string, unknown>): boolean {
     try {

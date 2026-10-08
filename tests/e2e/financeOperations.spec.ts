@@ -3,6 +3,20 @@ import { expect, test } from "./fixtures";
 
 test.use({ multiConnectionData: true });
 
+test("filters connection products and clears the selection", async ({ window }) => {
+    await window.locator('[data-sidebar="connections"]').click();
+    await window.locator("#connections-filter-btn").click();
+    await window.locator("#connections-type-filter").selectOption("financeOperations");
+    const rows = window.locator("#sidebar-connections-list .connection-item-pptb");
+    await expect(rows).toHaveCount(1);
+    await expect(rows.first()).toContainText("F&O");
+    await window.locator("#connections-type-filter").selectOption("dataverse");
+    await expect(rows).toHaveCount(4);
+    await window.locator("#connections-filter-clear-btn").click();
+    await expect(window.locator("#connections-type-filter")).toHaveValue("");
+    await expect(rows).toHaveCount(5);
+});
+
 async function modalWith(app: ElectronApplication, selector: string): Promise<Page> {
     let page: Page | undefined;
     await expect.poll(async () => {

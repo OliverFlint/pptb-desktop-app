@@ -83,6 +83,27 @@ describe("F&O HTTP transport", () => {
         await expect(financeOperationsHttp(buildFinanceOperationsUrl("https://erp.example", "Rows"), "GET", "token")).rejects.toMatchObject({ status: 302 });
         expect(https.request).toHaveBeenCalledTimes(1);
     });
+    it("includes nested F&O validation messages without stack traces or tokens", async () => {
+        respond(400, JSON.stringify({ error: { message: "An error has occurred.", innererror: {
+            message: "Write failed for table CustTable.", stacktrace: "private-server-stack",
+            internalexception: { message: "Customer group secret-token does not exist.", type: "PrivateServerType" },
+        } } }));
+        const result = financeOperationsHttp(buildFinanceOperationsUrl("https://erp.example", "CustomersV3"), "POST", "secret-token");
+        await expect(result).rejects.toMatchObject({ status: 400, message: "F&O HTTP 400: An error has occurred. | Write failed for table CustTable. | Customer group [redacted] does not exist." });
+    });
+    it("handles OData message objects and detail arrays, deduplicating messages", async () => {
+        respond(400, JSON.stringify({ error: { message: { value: "Validation failed" },
+            details: [{ message: "Name is required" }, { message: "Name is required" }, { message: null }],
+        } }));
+        await expect(financeOperationsHttp(buildFinanceOperationsUrl("https://erp.example", "Rows"), "POST", "token")).rejects.toThrow("F&O HTTP 400: Validation failed | Name is required");
+    });
+    it("bounds validation messages and handles malformed error envelopes", async () => {
+        respond(400, JSON.stringify({ error: { message: "x".repeat(4000) } }));
+        const result = financeOperationsHttp(buildFinanceOperationsUrl("https://erp.example", "Rows"), "POST", "token");
+        await expect(result).rejects.toMatchObject({ message: "F&O HTTP 400: " + "x".repeat(2000) });
+        respond(400, JSON.stringify({ error: "unknown" }));
+        await expect(financeOperationsHttp(buildFinanceOperationsUrl("https://erp.example", "Rows"), "POST", "token")).rejects.toThrow("F&O HTTP 400: Request failed");
+    });
     it("terminates a stalled request at the total timeout", async () => {
         jest.useFakeTimers();
         try {
