@@ -21,6 +21,8 @@ For Microsoft Login, configure an Entra mobile/desktop app redirect URI of `http
 5. Enter an available collection name with `?$top=5` and click **Run query**. For example, `CustomersV3?$top=5`. Not every environment exposes the same entities.
 6. Use **Next page** when the response supplies `@odata.nextLink`. Add `cross-company=true` and/or a `$filter` on `dataAreaId` explicitly when needed. The API does not inject a company filter or fetch every page automatically.
 
+To probe server-driven paging with existing data, set **Requested page size** to `2` and query a collection with more than two records, without `$top` (or with `$top` greater than `2`). The sample sends `Prefer: odata.maxpagesize=2` on the initial query and next-page requests. Leave the field blank to use the server default. The user confirmed live paging passed in the test environment on 2026-10-10 after adding this option; other environments may ignore the preference. A result without `@odata.nextLink` does not establish a paging pass. `$top` limits the total result count rather than requesting a page size.
+
 The sample does not write data. For a negative check, query an unavailable entity and verify an HTTP error. A foreign-origin absolute next link must be rejected. Dataverse tools should continue to offer only Dataverse connections.
 
 ## Compare desktop and unattended reads
@@ -47,16 +49,19 @@ The sample does not write data. For a negative check, query an unavailable entit
 
 See [MCP invocation and job handling](MCP_IMPLEMENTATION.md) for the client and result envelope. These steps close the live desktop/headless criterion of phase 4; unit checks of the sample cannot establish live authentication.
 
+Headless query invocations also accept an optional integer `pageSize` from `1` to `10000`, for example `{ "query": "CustomersV3?cross-company=true", "pageSize": 2, "__pptb": { "executionMode": "headless", "mode": "two-way", "connectionName": "F&O Client Secret", "timeoutMs": 120000 } }`. Pass a returned next link as `query` with the same `pageSize` to continue. Reload the local tool after this configuration change so MCP exposes the new input.
+
 ## Remaining live acceptance checks
 
-| Check | Recorded result on 2026-10-08 |
+| Check | Recorded result (updated 2026-10-10) |
 | --- | --- |
 | Microsoft Login and OData reads | Passed, user confirmed |
 | Client-secret authentication / Test Connection | Passed, user confirmed |
-| Interactive silent renewal and client-secret renewal | Deferred at user request; live verification outstanding |
+| Interactive silent renewal and client-secret renewal | Passed, user confirmed both live tests on 2026-10-09 |
 | Cross-company filtering | Passed, user confirmed |
-| Follow a real server-provided next link | Unverified: insufficient data volume in the test environment |
-| Restricted-user service probe and entity permission error | Unverified: no restricted user available in the test environment |
+| Follow a real server-provided next link | Passed, user confirmed live paging on 2026-10-10 after adding the sample page-size option |
+| Restricted-user service-document probe | Passed: Test Connection and List entity sets succeeded, user confirmed on 2026-10-10 |
+| Restricted-user entity permission error | Passed: user supplied HTTP 403, "User is not authorized to read view CustCustomerV3Entity. Request denied." on 2026-10-10; raw HTTP 403 body captured and sanitized on 2026-10-10 |
 | Create a disposable CustomersV3 record | Passed after omitting the account number for environment numbering |
 | Retrieve using dataAreaId and CustomerAccount | Passed with explicit cross-company=true; default-scoped read returned 404 |
 | Update and delete the disposable record, then verify deletion | Passed, user confirmed PATCH/name verification/DELETE/final GET 404 |
@@ -65,7 +70,7 @@ See [MCP invocation and job handling](MCP_IMPLEMENTATION.md) for the client and 
 
 For write/action checks, use a sandbox entity and action selected by the environment owner. Record sanitized request paths, response status and keys, and confirm cleanup of the disposable record. Do not use production records as test fixtures.
 
-CustomersV3 create testing returned HTTP 400 with the generic outer message "An error has occurred."; CRUD acceptance remains pending. The transport now includes bounded, deduplicated nested validation messages from OData inner errors and details, redacts the access token, and excludes server stack traces. Its 35 focused transport/manager tests pass. After restarting the rebuilt app, check whether the attempted account exists before retrying the create, and capture the detailed error if it fails again.
+Initial CustomersV3 create testing returned HTTP 400 with the generic outer message "An error has occurred."; the subsequent error-reporting fix and corrected payload allowed CRUD acceptance to pass. The transport now includes bounded, deduplicated nested validation messages from OData inner errors and details, redacts the access token, and excludes server stack traces. Its 35 focused transport/manager tests pass. For future failed create attempts, check whether the attempted account exists before retrying and capture the detailed error if it fails again.
 
 ## API for tool authors
 
@@ -94,3 +99,11 @@ CustomersV3 live follow-up: the supplied PPTB account failed the company's US_SI
 CustomersV3 CRUD acceptance is complete: create, keyed cross-company read, PATCH with name verification, DELETE, and final GET returning 404 all passed, as confirmed by the user on 2026-10-08. The disposable customer was cleaned up.
 
 Action acceptance passed on 2026-10-08: the collection-bound `Microsoft.Dynamics.DataEntities.GetInstalledModules` action, bound to the SystemNotification entity collection resolved from CSDL, was invoked through `request("POST", path, {})`. It returned HTTP 200 with an OData `Collection(Edm.String)` containing installed module information. No environment-specific response headers or full module inventory are stored in this guide.
+
+## Offline response fixtures
+
+The read-only headless sample now accepts `operation: "serviceDocument"` or `operation: "metadata"` to return `{ serviceDocument }` or `{ metadata }`. Reload the sample in Local Development after updating its configuration. Invoke it with the tested client-secret connection and the existing headless/two-way `__pptb` envelope; omit `query` for these operations. Existing query-only invocations still default to `operation: "query"`. Sanitize captures before adding them to the repository and update the fixture provenance record only once a live result has been obtained.
+
+See the [fixture bundle and provenance record](../tests/fixtures/financeOperations/README.md). Sanitized customer and installed-module responses and the parsed action descriptor come from the supplied live results. The customer validation JSON envelope was captured directly from an HTTP 400 response on 2026-10-10; its account/number-sequence identifiers were replaced and server stack trace redacted. Temporary capture code and the raw file were removed afterward. On 2026-10-10, service discovery and raw CSDL were successfully captured through the client-secret headless sample and reduced into live-derived fixtures. Both paging responses were supplied by the user on 2026-10-10 and sanitized with their real nextLink query structure preserved ($skip=2, then $skip=4, each with $top=2). The second page also contains a continuation. The restricted-user HTTP 403 body was captured on 2026-10-10, with the server stack trace redacted; temporary capture code and the raw file were removed afterward. Live paging passed separately, as confirmed by the user on 2026-10-10. The bundle is exercised by 45 focused F&O transport/authentication/manager tests.
+
+Live capture results on 2026-10-10: service discovery returned 4,746 entity sets; metadata returned 54,656,812 UTF-8 bytes. The retained excerpts confirm CustomersV3 keys dataAreaId/CustomerAccount, the SystemNotification key RuleId, the SystemNotifications collection binding, and GetInstalledModules returning Collection(Edm.String). Full responses were kept outside the repository only while preparing sanitized excerpts, then removed.

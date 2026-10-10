@@ -1,10 +1,19 @@
 import { EventEmitter } from "events";
 import * as https from "https";
 import { gzipSync } from "zlib";
+import { readFileSync } from "fs";
+import { join } from "path";
 import { createFinanceOperationsAPI, financeOperationsRecordPath } from "../../../src/common/financeOperationsApi";
+import type { FinanceOperationsMethod, FinanceOperationsOptions, FinanceOperationsResponse } from "../../../src/common/financeOperationsApi";
 import { buildFinanceOperationsUrl, financeOperationsHttp, validateFinanceOperationsHeaders } from "../../../src/main/utilities/financeOperationsHttp";
 
 jest.mock("https", () => ({ request: jest.fn() }));
+
+const fixtureText = (name: string) => readFileSync(join(__dirname, "../../fixtures/financeOperations", name), "utf8");
+const fixtureJson = (name: string) => JSON.parse(fixtureText(name));
+async function fixtureRequest<T>(method: FinanceOperationsMethod, path: string, body?: unknown, options?: FinanceOperationsOptions): Promise<FinanceOperationsResponse<T>> {
+    return await financeOperationsHttp(buildFinanceOperationsUrl("https://erp.example", path), method, "test-token", body, options?.headers) as FinanceOperationsResponse<T>;
+}
 
 describe("F&O OData boundaries and keys", () => {
     const root = "https://erp.operations.dynamics.com";
@@ -47,6 +56,54 @@ describe("F&O HTTP transport", () => {
         return request;
     }
     afterEach(() => jest.clearAllMocks());
+    it("reads sanitized live customer fields and uses the complete composite key", async () => {
+        respond(200, fixtureText("customers-page.json"));
+        const api = createFinanceOperationsAPI(fixtureRequest);
+        const page = await api.queryData("CustomersV3?$top=1&cross-company=true");
+        const customer = page.value[0];
+        respond(200, JSON.stringify(customer));
+        await expect(api.retrieve("CustomersV3", { dataAreaId: String(customer.dataAreaId), CustomerAccount: String(customer.CustomerAccount) })).resolves.toEqual(customer);
+        expect((https.request as jest.Mock).mock.calls[1][0].pathname).toBe("/data/CustomersV3(dataAreaId='test',CustomerAccount='TEST_0001')");
+    });
+    it("invokes the supplied collection-bound action and parses its sanitized string result", async () => {
+        const action = fixtureJson("action-metadata.json");
+        const response = fixtureJson("installed-modules.json");
+        respond(response.status, JSON.stringify(response.body), response.headers);
+        const api = createFinanceOperationsAPI(fixtureRequest);
+        await expect(api.request("POST", `SystemNotifications/${action.namespace}.${action.name}`, {})).resolves.toEqual(response);
+        expect((https.request as jest.Mock).mock.calls[0][1].method).toBe("POST");
+        expect(https.request).toHaveBeenCalledTimes(1);
+    });
+    it("surfaces live-derived validation and permission denials without server stack traces", async () => {
+        respond(400, fixtureText("customer-account-validation.json"));
+        const validation = financeOperationsHttp(buildFinanceOperationsUrl("https://erp.example", "CustomersV3"), "POST", "test-token");
+        await expect(validation).rejects.toThrow("does not match format TEST_####");
+        await expect(validation).rejects.not.toThrow("[redacted server stack trace]");
+        respond(403, fixtureText("permission-denied.json"));
+        const denial = financeOperationsHttp(buildFinanceOperationsUrl("https://erp.example", "CustomersV3"), "GET", "test-token");
+        await expect(denial).rejects.toMatchObject({ status: 403, message: "F&O HTTP 403: An error has occurred. | User is not authorized to read view CustCustomerV3Entity.  Request denied." });
+        await expect(denial).rejects.not.toThrow("[redacted server stack trace]");
+    });
+    it("preserves live-derived next links and follows each page only on explicit request", async () => {
+        const api = createFinanceOperationsAPI(fixtureRequest);
+        respond(200, fixtureText("customers-paged.json"));
+        const first = await api.queryData("CustomersV3?cross-company=true");
+        expect(https.request).toHaveBeenCalledTimes(1);
+        respond(200, fixtureText("customers-next-page.json"));
+        const next = await api.queryData(first["@odata.nextLink"]!);
+        expect(next.value[0].CustomerAccount).not.toBe(first.value[0].CustomerAccount);
+        expect(next["@odata.nextLink"]).toBe("https://erp.example/data/CustomersV3?cross-company=true&$select=dataAreaId%2CCustomerAccount&$skip=4&$top=2");
+        expect(next.value).toHaveLength(2);
+        expect(https.request).toHaveBeenCalledTimes(2);
+        expect((https.request as jest.Mock).mock.calls[1][0].href).toBe(first["@odata.nextLink"]);
+    });
+    it("reads the reduced live service document and preserves the live CSDL excerpt", async () => {
+        const api = createFinanceOperationsAPI(fixtureRequest);
+        respond(200, fixtureText("service-document.json"));
+        await expect(api.getServiceDocument()).resolves.toEqual(fixtureJson("service-document.json"));
+        respond(200, fixtureText("metadata.xml"), { "content-type": "application/xml" });
+        await expect(api.getMetadata()).resolves.toBe(fixtureText("metadata.xml"));
+    });
     it("reads gzip JSON, XML metadata and empty 204 responses", async () => {
         const url = buildFinanceOperationsUrl("https://erp.example", "Rows");
         respond(200, gzipSync('{"value":[]}'), { "content-encoding": "gzip" });

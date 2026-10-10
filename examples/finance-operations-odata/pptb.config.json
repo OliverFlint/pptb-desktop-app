@@ -2,8 +2,20 @@
   "invocation": {
     "version": "1.0.0",
     "capabilities": ["finance-operations-odata-read"],
-    "prefill": { "properties": { "query": { "type": "string" } } },
-    "returnTopic": { "properties": { "page": { "type": "object" } } }
+    "prefill": {
+      "properties": {
+        "operation": { "type": "string", "enum": ["query", "serviceDocument", "metadata"] },
+        "query": { "type": "string" },
+        "pageSize": { "type": "integer", "minimum": 1, "maximum": 10000 }
+      }
+    },
+    "returnTopic": {
+      "properties": {
+        "page": { "type": "object" },
+        "serviceDocument": { "type": "object" },
+        "metadata": { "type": "string" }
+      }
+    }
   },
   "agents": {
     "version": "1.0.0",

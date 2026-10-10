@@ -2,6 +2,7 @@ const api = window.financeOperationsAPI;
 const output = document.getElementById("result");
 const status = document.getElementById("status");
 const query = document.getElementById("query");
+const pageSize = document.getElementById("page-size");
 const nextButton = document.getElementById("next");
 let nextLink;
 
@@ -25,8 +26,17 @@ async function run(operation) {
 }
 document.getElementById("discover").addEventListener("click", () => run(() => api.getServiceDocument()));
 document.getElementById("metadata").addEventListener("click", () => run(() => api.getMetadata()));
-document.getElementById("run").addEventListener("click", () => run(() => api.queryData(query.value.trim())));
-nextButton.addEventListener("click", () => { const link = nextLink; if (link) { query.value = link; run(() => api.queryData(link)); } });
+function queryPage(path) {
+    const value = pageSize.value.trim();
+    if (!value) return api.queryData(path);
+    const size = Number(value);
+    if (!Number.isInteger(size) || size < 1 || size > 10000) {
+        throw new Error("Page size must be an integer between 1 and 10000.");
+    }
+    return api.queryData(path, { headers: { Prefer: `odata.maxpagesize=${size}` } });
+}
+document.getElementById("run").addEventListener("click", () => run(() => queryPage(query.value.trim())));
+nextButton.addEventListener("click", () => { const link = nextLink; if (link) { query.value = link; run(() => queryPage(link)); } });
 window.toolboxAPI.connections.getActiveConnection().then((connection) => {
     document.getElementById("connection").textContent = connection ? `${connection.name} — ${connection.url}` : "No connection selected";
 });

@@ -25,6 +25,9 @@
   </div>
   <label for="query">OData path relative to /data (or a returned next link)</label>
   <input id="query" value="CustomersV3?$top=5" spellcheck="false">
+  <label for="page-size">Requested page size (optional)</label>
+  <input id="page-size" type="number" min="1" max="10000" step="1" placeholder="Server default" aria-describedby="page-size-help">
+  <p id="page-size-help">Request 1–10,000 records per page. The server may ignore this preference. $top limits the total result count.</p>
   <div class="actions">
     <button id="run">Run query</button>
     <button id="next" disabled>Next page</button>
